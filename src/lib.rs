@@ -263,7 +263,7 @@ pub struct GenerateStreamItem {
 
 struct LoRA {
     name: String,
-    adapter: *mut llama_lora_adapter,
+    adapter: *mut llama_adapter_lora,
     scale: f32,
 }
 
@@ -394,49 +394,49 @@ impl LlamaModel {
 
     /// Returns the beginning-of-sequence.
     pub fn bos_token(&self) -> Token {
-        unsafe { llama_token_eos(self.pimpl) }
+        unsafe { llama_token_bos(self.vocab()) }
     }
 
     /// Returns the end-of-sequence.
     pub fn eos_token(&self) -> Token {
-        unsafe { llama_token_eos(self.pimpl) }
+        unsafe { llama_token_eos(self.vocab()) }
     }
 
     /// Returns end-of-turn token.
     pub fn eot_token(&self) -> Token {
-        unsafe { llama_token_eot(self.pimpl) }
+        unsafe { llama_token_eot(self.vocab()) }
     }
 
     /// Returns classification token.
     pub fn cls_token(&self) -> Token {
-        unsafe { llama_token_cls(self.pimpl) }
+        unsafe { llama_token_cls(self.vocab()) }
     }
 
     /// Returns sequence separator token.
     pub fn sep_token(&self) -> Token {
-        unsafe { llama_token_sep(self.pimpl) }
+        unsafe { llama_token_sep(self.vocab()) }
     }
 
     /// Returns next-line token.
-    pub fn nl_tokne(&self) -> Token {
-        unsafe { llama_token_nl(self.pimpl) }
+    pub fn nl_token(&self) -> Token {
+        unsafe { llama_token_nl(self.vocab()) }
     }
 
     /// Returns padding token.
     pub fn pad_token(&self) -> Token {
-        unsafe { llama_token_pad(self.pimpl) }
+        unsafe { llama_token_pad(self.vocab()) }
     }
 
     pub fn add_bos_token(&self) -> bool {
-        unsafe { llama_add_bos_token(self.pimpl) }
+        unsafe { llama_add_bos_token(self.vocab()) }
     }
 
     pub fn add_eos_token(&self) -> bool {
-        unsafe { llama_add_eos_token(self.pimpl) }
+        unsafe { llama_add_eos_token(self.vocab()) }
     }
 
     pub fn n_vocab(&self) -> i32 {
-        unsafe { llama_n_vocab(self.pimpl) }
+        unsafe { llama_n_vocab(self.vocab()) }
     }
 
     /// Auto-regressive text generation.
@@ -503,7 +503,7 @@ impl LlamaModel {
             }
 
             let new_token_id_ = unsafe { llama_sampler_sample(sampler.pimpl, lctx, -1) };
-            let is_eog = unsafe { llama_token_is_eog(self.pimpl, new_token_id_) };
+            let is_eog = unsafe { llama_token_is_eog(self.vocab(), new_token_id_) };
             if is_eog {
                 break;
             }
@@ -516,7 +516,7 @@ impl LlamaModel {
             let mut buf = vec![0 as c_char; 256];
             let n = unsafe {
                 llama_token_to_piece(
-                    self.pimpl,
+                    self.vocab(),
                     new_token_id_,
                     buf.as_mut_ptr(),
                     buf.len() as i32,
@@ -613,7 +613,7 @@ impl LlamaModel {
                 // Accepting the token pdates the internal state of certain samplers.
                 unsafe { llama_sampler_accept(sampler.pimpl, new_token_id) };
 
-                let is_eog = unsafe { llama_token_is_eog(self.pimpl, new_token_id) };
+                let is_eog = unsafe { llama_token_is_eog(self.vocab(), new_token_id) };
                 if is_eog {
                     yield GenerateStreamItem {
                         details: GenerateDetails {
@@ -663,8 +663,8 @@ impl LlamaModel {
         scale: f32,
     ) -> Result<()> {
         let c_lora_path = CString::new(lora_path.as_ref().to_str().unwrap()).into_diagnostic()?;
-        let adapter = unsafe { llama_lora_adapter_init(self.pimpl, c_lora_path.as_ptr()) };
-        unsafe { llama_lora_adapter_set(self.ctx.pimpl, adapter, scale); };
+        let adapter = unsafe { llama_adapter_lora_init(self.pimpl, c_lora_path.as_ptr()) };
+        unsafe { llama_set_adapter_lora(self.ctx.pimpl, adapter, scale); };
 
         let lora = LoRA {
             name: adapter_name.as_ref().to_owned(),
@@ -689,7 +689,7 @@ impl LlamaModel {
     pub fn remove_lora_adapter<S: AsRef<str>>(&mut self, adapter_name: S) -> Result<()> {
         match self.loras.get(adapter_name.as_ref()) {
             Some(lora) => {
-                unsafe { llama_lora_adapter_remove(self.ctx.pimpl, lora.adapter); };
+                unsafe { llama_clear_adapter_lora(self.ctx.pimpl); };
                 self.loras.remove(adapter_name.as_ref());
 
                 Ok(())
@@ -703,7 +703,7 @@ impl LlamaModel {
 
     /// Clear all LoRA adapters.
     pub fn remove_lora_adapters(&mut self) -> Result<()> {
-        unsafe { llama_lora_adapter_clear(self.ctx.pimpl) };
+        unsafe { llama_clear_adapter_lora(self.ctx.pimpl) };
         self.loras.clear();
 
         Ok(())
@@ -715,6 +715,11 @@ impl LlamaModel {
             1 => Err(miette!("Try reducing the size of the batch or increase the context size.")),
             _ => Err(miette!("failed to decode batch"))
         }
+    }
+
+    // Helper function to get the vocabulary pointer from the model
+    fn vocab(&self) -> *const llama_vocab {
+        unsafe { llama_model_get_vocab(self.pimpl) }
     }
 }
 
@@ -1003,7 +1008,6 @@ impl LlamaTokenizer {
         let mut c_formatted: Vec<c_char> = vec![0; alloc_size];
         let n_chars = unsafe {
             llama_chat_apply_template(
-                model.pimpl,
                 null(),
                 chat.as_mut_ptr(),
                 chat.len(),
@@ -1021,7 +1025,6 @@ impl LlamaTokenizer {
         if n_chars > alloc_size as i32 {
             unsafe {
                 llama_chat_apply_template(
-                    model.pimpl,
                     null(),
                     chat.as_mut_ptr(),
                     chat.len(),
@@ -1062,7 +1065,7 @@ impl LlamaTokenizer {
         let c_text = CString::new(text.as_ref()).unwrap();
         let n_tokens = unsafe {
             -llama_tokenize(
-                model.pimpl,
+                llama_model_get_vocab(model.pimpl),
                 c_text.as_ptr(),
                 text.as_ref().len() as i32,
                 null_mut(),
@@ -1075,7 +1078,7 @@ impl LlamaTokenizer {
         let mut tokens = vec![0 as Token; n_tokens as usize];
         let rc = unsafe {
             llama_tokenize(
-                model.pimpl,
+                llama_model_get_vocab(model.pimpl),
                 c_text.as_ptr(),
                 text.as_ref().len() as i32,
                 tokens.as_mut_ptr(),
@@ -1098,12 +1101,12 @@ impl LlamaTokenizer {
     pub fn decode(&self, model: &LlamaModel, tokens: Vec<Token>, remove_special: bool, unparse_special: bool) -> Result<String> {
         let mut text: Vec<c_char> = vec![0; tokens.len()];
         let n_chars = unsafe {
-            llama_detokenize(model.pimpl, tokens.as_ptr(), tokens.len() as i32, text.as_mut_ptr(), text.len() as i32, remove_special, unparse_special)
+            llama_detokenize(llama_model_get_vocab(model.pimpl), tokens.as_ptr(), tokens.len() as i32, text.as_mut_ptr(), text.len() as i32, remove_special, unparse_special)
         };
         if n_chars < 0 {
             text.resize(-n_chars as usize + 1, 0);
             unsafe {
-                llama_detokenize(model.pimpl, tokens.as_ptr(), tokens.len() as i32, text.as_mut_ptr(), -n_chars, remove_special, unparse_special);
+                llama_detokenize(llama_model_get_vocab(model.pimpl), tokens.as_ptr(), tokens.len() as i32, text.as_mut_ptr(), -n_chars, remove_special, unparse_special);
             }
         }
 
@@ -1115,7 +1118,7 @@ impl LlamaTokenizer {
     pub fn convert_token_to_piece(&self, model: &LlamaModel, token: Token, skip_special: bool) -> Result<String> {
         let mut buf = vec![0; 256];
         let n_chars = unsafe {
-            llama_token_to_piece(model.pimpl, token, buf.as_mut_ptr(), 256, 0, skip_special)
+            llama_token_to_piece(llama_model_get_vocab(model.pimpl), token, buf.as_mut_ptr(), 256, 0, skip_special)
         };
         if n_chars < 0 {
             bail!("failed to convert token to piece")
@@ -1185,13 +1188,10 @@ impl Sampler {
             params.frequency_penalty.is_some() ||
             params.presence_penalty.is_some() {
             sampler.add_penalties(
-                model,
                 -1,
                 params.repetition_penalty.unwrap_or(1.0),
                 params.frequency_penalty.unwrap_or(0.0),
                 params.presence_penalty.unwrap_or(0.0),
-                false,
-                true,
             );
         }
         if params.do_sample {
@@ -1242,29 +1242,22 @@ impl Sampler {
         }
     }
 
+    /// Add penalties into the sampler chain.
     pub fn add_penalties(
         &mut self,
-        model: &LlamaModel,
         penalty_last_n: i32,
         penalty_repeat: f32,
         penalty_freq: f32,
         penalty_present: f32,
-        penalize_newline: bool,
-        ignore_eos: bool,
     ) {
         unsafe {
             llama_sampler_chain_add(
                 self.pimpl,
                 llama_sampler_init_penalties(
-                    llama_n_vocab(model.pimpl),
-                    llama_token_eos(model.pimpl),
-                    llama_token_nl(model.pimpl),
                     penalty_last_n,
                     penalty_repeat,
                     penalty_freq,
-                    penalty_present,
-                    penalize_newline,
-                    ignore_eos,
+                    penalty_present
                 ),
             );
         }
