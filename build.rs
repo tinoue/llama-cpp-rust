@@ -10,6 +10,7 @@ fn main() -> miette::Result<()> {
 
     // Build Llama.cpp
     let dst = cmake::Config::new(&llama_path)
+        .define("CMAKE_OSX_DEPLOYMENT_TARGET", "10.15")
         .define("CMAKE_BUILD_TYPE", "Release")
         .define("LLAMA_BUILD_EXAMPLES", "OFF")
         .define("LLAMA_BUILD_TESTS", "OFF")
@@ -21,6 +22,7 @@ fn main() -> miette::Result<()> {
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=dylib=llama");
     println!("cargo:rustc-link-lib=dylib=ggml");
+    println!("cargo:rustc-link-arg=-mmacosx-version-min=10.15");
 
     // Generate bindings for Llama.cpp API
     let bindings = builder().header("wrapper.h")
