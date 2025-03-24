@@ -10,19 +10,22 @@ fn main() -> miette::Result<()> {
 
     // Build Llama.cpp
     let dst = cmake::Config::new(&llama_path)
-        .define("CMAKE_OSX_DEPLOYMENT_TARGET", "10.15")
+        // .define("CMAKE_OSX_DEPLOYMENT_TARGET", "10.15")
         .define("CMAKE_BUILD_TYPE", "Release")
         .define("LLAMA_BUILD_EXAMPLES", "OFF")
         .define("LLAMA_BUILD_TESTS", "OFF")
         .define("LLAMA_BUILD_SERVER", "OFF")
         .define("BUILD_SHARED_LIBS", "ON")
+        .define("GGML_METAL", "ON")
         // .define("CMAKE_LIBRARY_OUTPUT_DIRECTORY", out_path.to_str().unwrap())
+        // .cflag("-mmacosx-version-min=10.15")
+        // .cxxflag("-mmacosx-version-min=10.15")
         .build();
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=dylib=llama");
     println!("cargo:rustc-link-lib=dylib=ggml");
-    println!("cargo:rustc-link-arg=-mmacosx-version-min=10.15");
+    // println!("cargo:rustc-link-arg=-mmacosx-version-min=10.15");
 
     // Generate bindings for Llama.cpp API
     let bindings = builder().header("wrapper.h")
